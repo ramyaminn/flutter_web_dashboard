@@ -30,7 +30,7 @@ class _ConfigDashboardState extends State<ConfigDashboard> {
   Color mainColor = Colors.blue;
 
   final String githubRepo = "ramyaminn/config-cluewear-com";
-  final String githubToken = "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";
+  final String githubToken = "YOUR_GITHUB_TOKEN_HERE";
 
   Future<String?> uploadFileToGitHub(html.File file, String fileName) async {
     final reader = html.FileReader();
