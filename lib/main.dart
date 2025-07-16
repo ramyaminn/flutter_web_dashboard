@@ -1,177 +1,210 @@
 import 'dart:convert';
 import 'dart:html' as html;
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
 
-void main() => runApp(const DashboardApp());
+void main() {
+  runApp(const ConfigDashboardApp());
+}
 
-class DashboardApp extends StatelessWidget {
-  const DashboardApp({super.key});
+class ConfigDashboardApp extends StatelessWidget {
+  const ConfigDashboardApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'App Config Dashboard',
-      theme: ThemeData(primarySwatch: Colors.blue),
-      home: const ConfigDashboard(),
+      title: 'Dashboard Config',
+      theme: ThemeData(primarySwatch: Colors.indigo),
+      home: DashboardPage(),
       debugShowCheckedModeBanner: false,
     );
   }
 }
 
-class ConfigDashboard extends StatefulWidget {
-  const ConfigDashboard({super.key});
-
+class DashboardPage extends StatefulWidget {
   @override
-  State<ConfigDashboard> createState() => _ConfigDashboardState();
+  State<DashboardPage> createState() => _DashboardPageState();
 }
 
-class _ConfigDashboardState extends State<ConfigDashboard> {
-  String? logoUrl;
-  List<String> sliderImages = [];
-  Color mainColor = Colors.blue;
+class _DashboardPageState extends State<DashboardPage> {
+  String imageBase64 = '';
+  String imageName = '';
+  String logoUrl = '';
+  String textValue = '';
+  bool isLoading = false;
+  String message = '';
 
-  final String githubRepo = "ramyaminn/config-cluewear-com";
-  final String githubToken = "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"; // 🔒 استبدله بتوكن حقيقي
-
-  Future<String?> uploadFileToGitHub(html.File file, String fileName) async {
-    final reader = html.FileReader();
-    reader.readAsDataUrl(file);
-    await reader.onLoad.first;
-    final base64Content = reader.result.toString().split(",").last;
-
-    final url = Uri.parse(
-        "https://api.github.com/repos/$githubRepo/contents/main/$fileName");
-    final response = await http.put(
-      url,
-      headers: {
-        'Authorization': 'token $githubToken',
-        'Accept': 'application/vnd.github+json',
-      },
-      body: jsonEncode({
-        "message": "Upload $fileName",
-        "content": base64Content,
-      }),
+  Future<void> pickImageFromDevice() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+      withData: true,
     );
 
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      return "https://raw.githubusercontent.com/$githubRepo/main/$fileName";
-    } else {
-      print("Upload error: ${response.body}");
-      return null;
+    if (result != null && result.files.isNotEmpty) {
+      final file = result.files.first;
+      final bytes = file.bytes!;
+      imageBase64 = base64Encode(bytes);
+      imageName = file.name;
+      setState(() {
+        logoUrl = '';
+      });
     }
   }
 
-  void pickFile(Function(html.File file) onPicked) {
-    final uploadInput = html.FileUploadInputElement()..accept = 'image/*';
-    uploadInput.click();
-    uploadInput.onChange.listen((_) {
-      final files = uploadInput.files;
-      if (files != null && files.isNotEmpty) {
-        onPicked(files.first);
-      }
+  Future<void> uploadImageAndConfigToGitHub() async {
+    setState(() {
+      isLoading = true;
+      message = '';
     });
-  }
 
-  void generateAndUploadJson() async {
-    final config = {
-      "HorizonLayout": [
-        {
-          "layout": "logo",
-          "image": logoUrl ?? "",
-          "showLogo": true,
+    const token = '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';
+    const repo = 'ramyaminn/config-cluewear-com';
+    const branch = 'main';
+
+    final imagePath = 'assets/$imageName';
+    final configPath = 'config_en.json';
+    final imageApiUrl = 'https://api.github.com/repos/$repo/contents/$imagePath';
+    final configApiUrl = 'https://api.github.com/repos/$repo/contents/$configPath';
+    final rawConfigUrl = 'https://raw.githubusercontent.com/$repo/$branch/$configPath';
+
+    try {
+      /// 1. رفع الصورة
+      final imageUpload = await http.put(
+        Uri.parse(imageApiUrl),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
         },
-        {
-          "layout": "slider",
-          "items": sliderImages.map((url) => {"image": url}).toList(),
-        }
-      ],
-      "Setting": {
-        "MainColor": "#${mainColor.value.toRadixString(16).substring(2)}"
-      }
-    };
-
-    final base64Content = base64Encode(utf8.encode(jsonEncode(config)));
-    final url = Uri.parse(
-        "https://api.github.com/repos/$githubRepo/contents/main/config_en.json");
-
-    final response = await http.put(
-      url,
-      headers: {
-        'Authorization': 'token $githubToken',
-        'Accept': 'application/vnd.github+json',
-      },
-      body: jsonEncode({
-        "message": "Update config_en.json",
-        "content": base64Content,
-      }),
-    );
-
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("✅ config_en.json uploaded successfully!")),
+        body: jsonEncode({
+          "message": "Upload logo image",
+          "content": imageBase64,
+          "branch": branch,
+        }),
       );
-    } else {
-      print("❌ Upload error: ${response.body}");
+
+      if (imageUpload.statusCode != 201 && imageUpload.statusCode != 200) {
+        setState(() {
+          message = "❌ فشل رفع الصورة: ${imageUpload.body}";
+          isLoading = false;
+        });
+        return;
+      }
+
+      final imageUrl = 'https://raw.githubusercontent.com/$repo/$branch/$imagePath';
+
+      /// 2. تحميل config_en.json من GitHub (raw)
+      final configRes = await http.get(Uri.parse(rawConfigUrl));
+      if (configRes.statusCode != 200) {
+        setState(() {
+          message = "❌ فشل تحميل config_en.json: ${configRes.statusCode}";
+          isLoading = false;
+        });
+        return;
+      }
+
+      final jsonConfig = jsonDecode(configRes.body);
+
+      /// 3. تعديل عنصر layout: logo فقط
+      bool logoFound = false;
+      for (var item in jsonConfig['HorizonLayout']) {
+        if (item['layout'] == 'logo') {
+          item['image'] = imageUrl;
+          item['text'] = textValue;
+          logoFound = true;
+        }
+      }
+
+      if (!logoFound) {
+        setState(() {
+          message = "⚠️ لم يتم العثور على عنصر layout: logo داخل HorizonLayout";
+          isLoading = false;
+        });
+        return;
+      }
+
+      /// 4. الحصول على sha من GitHub API
+      final getSha = await http.get(
+        Uri.parse(configApiUrl),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      final sha = jsonDecode(getSha.body)['sha'];
+
+      /// 5. رفع الملف المعدل
+      final updatedContent = base64Encode(utf8.encode(jsonEncode(jsonConfig)));
+      final configUpload = await http.put(
+        Uri.parse(configApiUrl),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          "message": "Update layout: logo image and text",
+          "content": updatedContent,
+          "sha": sha,
+          "branch": branch,
+        }),
+      );
+
+      if (configUpload.statusCode == 200 || configUpload.statusCode == 201) {
+        setState(() => message = "✅ تم تحديث config بنجاح!");
+      } else {
+        setState(() => message = "❌ فشل رفع config: ${configUpload.body}");
+      }
+    } catch (e) {
+      setState(() => message = "❌ حصل خطأ: $e");
     }
+
+    setState(() => isLoading = false);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Config Dashboard")),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ElevatedButton(
-              onPressed: () {
-                pickFile((file) async {
-                  final url = await uploadFileToGitHub(file, "logo.png");
-                  if (url != null) setState(() => logoUrl = url);
-                });
-              },
-              child: const Text("Upload Logo"),
-            ),
-            const SizedBox(height: 10),
-            ElevatedButton(
-              onPressed: () {
-                pickFile((file) async {
-                  final name = "slide${sliderImages.length + 1}.png";
-                  final url = await uploadFileToGitHub(file, name);
-                  if (url != null) setState(() => sliderImages.add(url));
-                });
-              },
-              child: const Text("Add Slider Image"),
-            ),
-            const SizedBox(height: 10),
-            Row(
+      appBar: AppBar(title: const Text("Cluewear Dashboard")),
+      body: Center(
+        child: SizedBox(
+          width: 600,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
               children: [
-                const Text("Main Color: "),
-                const SizedBox(width: 10),
-                GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      mainColor = mainColor == Colors.blue
-                          ? Colors.red
-                          : Colors.blue;
-                    });
-                  },
-                  child: Container(
-                    width: 30,
-                    height: 30,
-                    color: mainColor,
-                  ),
+                ElevatedButton.icon(
+                  onPressed: pickImageFromDevice,
+                  icon: const Icon(Icons.image),
+                  label: const Text("اختر صورة من جهازك"),
                 ),
+                const SizedBox(height: 10),
+                if (imageName.isNotEmpty) Text("📎 الصورة المختارة: $imageName"),
+
+                const SizedBox(height: 20),
+                TextField(
+                  decoration: const InputDecoration(
+                    labelText: "نص اللوجو (اختياري)",
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (val) => textValue = val,
+                ),
+                const SizedBox(height: 30),
+                isLoading
+                    ? const CircularProgressIndicator()
+                    : ElevatedButton.icon(
+                        onPressed: uploadImageAndConfigToGitHub,
+                        icon: const Icon(Icons.upload),
+                        label: const Text("رفع إلى GitHub"),
+                      ),
+                const SizedBox(height: 20),
+                Text(
+                  message,
+                  style: TextStyle(
+                    color: message.contains("✅") ? Colors.green : Colors.red,
+                    fontWeight: FontWeight.bold,
+                  ),
+                )
               ],
             ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: generateAndUploadJson,
-              child: const Text("Upload config_en.json"),
-            ),
-          ],
+          ),
         ),
       ),
     );
