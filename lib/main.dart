@@ -59,7 +59,7 @@ class _DashboardPageState extends State<DashboardPage> {
       message = '';
     });
 
-    const token = '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';
+    const token = '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';
     const repo = 'ramyaminn/config-cluewear-com';
     const branch = 'main';
 
